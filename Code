@@ -1,0 +1,93 @@
+import io
+import numpy as np
+import pandas as pd
+from scipy.interpolate import interp1d
+
+#1. DATA INGESTION AND PIPELINE SETUP
+
+df = pd.read_csv("Module2_FSHD_Dataset.csv")
+
+#2. DEFINE GLOBAL COHORT TIMELINES
+#to prevent guessing outside known data boundaries (extrapolation), we establish common denominators T1 and T2 using the earliest recorded visits for those milestones.
+T1 = df["lag_months_y1"].min() #earliest year 1 window milestone across the cohort
+T2 = df["lag_months_y2"].min() #earliest year 2 window milestone across the cohort
+
+print(f"Group Baseline Targets Established: T1 = {T1:.2f} months, T2 = {T2:.2f} months\n")
+
+#3. PATIENT-LEVEL PROCESSING LOOP
+
+#Instantiate an empty list to capture compiled math calculations row by row
+results = []
+
+#Iterate through each unique patient in the dataset
+for idx, row in df.iterrows():
+    subject_id = row["subject_id"]
+#collect the x-axis variables for baseline, y1, and y2
+    months = np.array(
+        [
+            row["lag_months_baseline"],
+            row["lag_months_y1"],
+            row["lag_months_y2"]
+        ]
+    )
+#collect the right fat fractions (y-axis variables) matching those time points
+    ff_vals = np.array(
+        [row["ff_baseline_R"], row["ff_y1_R"], row["ff_y2_R"]]
+    )
+#identify entries where BOTH time and imaging values exist (filters out missing data)
+    valid_entries =  ~pd.insa(months) & ~pd.isna(ff_vals)
+    clean_months = months[valid_entries]
+    clean_ff = ff_vals[valid_entries]
+
+#initialize calculations to absolute default placeholders
+    estimate_T1_linear = np.nan
+    estimate_T2_linear = np.nan
+
+#CONDITION 1: LINEAR ESTIMATION AT T1
+    if len(clean_months) >= 2:
+        try:
+#generate a linear interpolation function based on the available data points
+            f_linear = interp1d(
+                clean_months, clean_ff, kind="linear", bounds_error = False
+            )
+            estimate_T1_linear = float(f_linear(T1))
+        except Exception:
+            pass 
+
+#CONDITION 2 QUADRATIC ESTIMATION AT T2
+    if len(clean_months) >= 3:
+        try:
+#generate a quadratic interpolation function based on the available data points
+            f_quad = interp1d(
+                clean_months, clean_ff, kind="quadratic", bounds_error = False
+            )
+            estimate_T2_quadratic = float(f_quad(T2))
+        except Exception:
+            pass 
+
+#Package current loop iterations into a python dictionary
+    results.append(
+        {
+            "subject_id": subject_id,
+            "estimate_T1_linear": (
+                round(estimate_T1_linear, 4)
+                if not np.isnan(estimate_T1_linear)
+                else np.nan
+            ),
+            "estimate_T2_quadratic": (
+                round(estimate_T2_quadratic, 4)
+                if not np.isnan(estimate_T2_quadratic)
+                else np.nan
+            ),
+        }
+    )
+
+#COMPILING AND EXPORTING DATA INTERPOLATION OUTPUTS
+
+results_df = pd.DataFrame(results)
+
+print("---Final Interpolated Output Dataset Preview ---")
+print(results_df.to_string(index=false))
+
+results_df.to_csv("interpolated_estimates.csv", index=False)
+print("\n-[SUCCESS]: File fully written to system environment as 'interpolated_estimates.csv'")
